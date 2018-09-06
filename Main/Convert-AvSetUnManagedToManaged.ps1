@@ -7,9 +7,9 @@
         Convert-AvSetUnManagedToManaged can be used in a scenario where one needs to convert the un-managed disks of the VM's in an availability set to managed.
 
         The typical workflow of this process is as follows.
-            - Get the Availability set object and updates the AV set type to managed 
-			- Stop's each unmanaged VM in the AV set
-            - converts the VM disks to managed & turns VM on.  
+            - Get the Availability set object and the list of VMs present
+			- Stop's each managed VM in the AV set
+            - converts the VM disks to managed, attaches them to an av-set & turns the VM on. 
     
     .EXAMPLE
         Converts the VM disks in the Availability set called "MY-AVSet" from unm-managed (blob VHD) to manaaged.
