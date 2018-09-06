@@ -9,10 +9,9 @@
 		The typical workflow is as follows.
             - Get the current VMObject
             - Delete the current VM (does not destroy the current configuration and/or disks) to release the locks/Leases on the disks.
-            - Create a temporary storage account to store the VHD's in the same resource group where the OS disk currently resides.
-            - COPY all OS & Data disks to the temp storage account
-            - update the VMObject with the new VHD URI's
-            - re-create the VM using VMobject   
+            - disk conversion by creeating a new managed disk VM object from blob.VHD
+            - update the VMObject with the new ManagedDiskId's
+            - re-create the VM using VMobject
     
     .EXAMPLE
         Convert the attached disks of VM "MY-VM" from unmanaged --> managed in the MY-RG resourceGroup.
