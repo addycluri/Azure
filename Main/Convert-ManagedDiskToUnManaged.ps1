@@ -39,11 +39,7 @@ function Convert-ManagedDiskToUnmanaged {
 		[string]$RGName,
 
 		[Parameter(Mandatory=$true)]
-		[string]$VMName,
-
-		[Parameter(Mandatory=$false)]
-		[string]$Clenaup
-
+		[string]$VMName
 	)
 
 

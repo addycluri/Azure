@@ -38,10 +38,7 @@ function Convert-AVSetManagedToUnManaged {
 
 		[Parameter(Mandatory=$true)]
 		[Alias("AVSet")]
-		[string]$AvailabilitySetName,
-
-		[Parameter(Mandatory=$false)]
-		[string]$Clenaup
+		[string]$AvailabilitySetName
 
 	)
 
