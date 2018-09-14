@@ -1,14 +1,14 @@
 ﻿<#
     .SYNOPSIS
         Convert-ManagedToUnManaged converts the attached storage of a VM from managed --> unmanaged
-        **PLEASE BE ADVISED THERE WILL BE DOWNTIME INCURRED ON THE VM **
+		**PLEASE BE ADVISED THERE WILL BE DOWNTIME INCURRED ON THE VM **
             
     .DESCRIPTION
         Convert-ManagedToUnManaged can be used in a scenario where one needs to  change the storage type of a VM from Managed To Unmanaged either for a migration temporarily or for any other purposes.
 
         The typical workflow of this process is as follows.
             - Get the current VMObject
-            - Delete the current VM (does not destroy the current configuration and/or disks) to release the locks/Leases on the disks.
+            - Delete the current VM to release the locks/Leases on the managed disks. (All data like OS & Data disks are preserved although some aspects like VM extensions, ETC. have to be reconfigured later on)
             - Create a temporary storage account to store the VHD's in the same resource group where the OS disk currently resides.
             - COPY all OS & Data disks to the temp storage account
             - update the VMObject with the new VHD URI's
@@ -46,23 +46,6 @@ function Convert-ManagedDiskToUnmanaged {
 
 	)
 
-
-	function Generate-AzureStorageAccountName {
-		Param()
-
-		$tempName = $null
-		$available = $false
-
-		Write-Log "Generating Temporary Storage Account Name" -Path $logf
-
-		Do {
-			$tempName = (New-Guid).Guid.ToString().Replace("-","").Substring(0,3) + $VMName.Replace("-","").ToLower()
-			$available = (Get-AzureRmStorageAccountNameAvailability -Name $tempName).NameAvailable
-		}
-		Until ($available)
-   
-		return $tempName
-	}
 
 	function Convert-ToUnManagedDisk {
 		Param(
@@ -210,6 +193,23 @@ function Convert-ManagedDiskToUnmanaged {
 	$vmResult = $null
 	$mDiskList = $null
 	$managedDisk = $null
+
+	function Generate-AzureStorageAccountName {
+		Param()
+
+		$tempName = $null
+		$available = $false
+
+		Write-Log "Generating Temporary Storage Account Name" -Path $logf
+
+		Do {
+			$tempName = (New-Guid).Guid.ToString().Replace("-","").Substring(0,3) + $VMName.Replace("-","").ToLower()
+			$available = (Get-AzureRmStorageAccountNameAvailability -Name $tempName).NameAvailable
+		}
+		Until ($available)
+   
+		return $tempName
+	}
 	$vhdSku = $null
 	$vmStatus = $null
 	$logf = $PWD.Path + "\$($VMName)-ManagedToUnmanaged-" + $(Get-Date -uFormat %m%d%Y-%H%M%S) + ".TXT"
@@ -236,7 +236,7 @@ function Convert-ManagedDiskToUnmanaged {
 	#proceed with the execution only if the VMObject is returned
 	if($vmObject -eq $null) {
 		Write-Log "Error getting VM object: $VMName" -Level Error -Path $logf
-		Exit
+		break
 	} else {
 		Write-log "vmObject:" -Path $logf
 		$vmObject | ConvertTo-Json | Write-Log -Path $logf
@@ -250,12 +250,12 @@ function Convert-ManagedDiskToUnmanaged {
 			}
 			else {
 				Write-Log "VM agent is not in Ready state. Please logonto the VM and ensure that the `"Windows Azure Guest Agent`" service is running. Exiting." -Path $logf
-				Exit
+				break
 			}
 		}
 		else {
 			Write-Log "Cannot determine VM agent status. Confirm that the agent is installed and communicating with Azure - https://docs.microsoft.com/en-us/azure/virtual-machines/windows/agent-user-guide. Exiting." -Path $logf
-			Exit
+			break
 		}
 
 		if($vmObject.StorageProfile.ImageReference -ne $null) {

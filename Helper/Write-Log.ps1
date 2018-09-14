@@ -33,7 +33,7 @@ function Write-Log {
 		[Alias("LogContent")] 
 		[string]$Message, 
 
-		[Parameter(Mandatory=$true)] 
+		[Parameter()] 
 		[Alias("LogPath")]
 		[string]$Path, 
          

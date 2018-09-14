@@ -8,8 +8,9 @@
 
         The typical workflow of this process is as follows.
             - Get the Availability set object and the list of VMs present
-			- Stop's each managed VM in the AV set
-            - converts the VM disks to unmanaged, attaches them to an av-set & turns the VM on.         
+			- Creates a new un-managed AV-set with "-latest" appended to the AV-set.
+			- Delete the current VM(s) in the AV set to release the locks/Leases on the managed disks. (All data like OS & Data disks are preserved although some aspects like VM extensions, ETC. have to be reconfigured later on)
+            - converts the VM disks to unmanaged, recreates the VM with the latest VHD URI's and adds them to an av-set         
     
     .EXAMPLE
         Converts the VM disks in the Availability set called "MY-AVSet" from managed to to un-managed (blob VHD) 

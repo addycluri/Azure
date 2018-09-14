@@ -7,11 +7,11 @@
         Convert-UnManagedToManaged can be used in a scenario where one needs to change the storage type of a VM either for a migration or for any other purposes.
         
 		The typical workflow is as follows.
-            - Get the current VMObject
-            - Delete the current VM (does not destroy the current configuration and/or disks) to release the locks/Leases on the disks.
-            - disk conversion by creeating a new managed disk VM object from blob.VHD
-            - update the VMObject with the new ManagedDiskId's
-            - re-create the VM using VMobject
+            - Stop the current VM 
+			- Break the disk lease to release all locks
+            - Disk conversion by creating a new managed disk VM object from blob.VHD
+            - Update the VMObject with the new ManagedDiskId
+            - Start the VM back up
     
     .EXAMPLE
         Convert the attached disks of VM "MY-VM" from unmanaged --> managed in the MY-RG resourceGroup.
@@ -90,13 +90,35 @@ function Convert-UnManagedDiskToManaged {
 				try {
 					#get the storage account name & SKU
 					$vhdURI = $diskProfile.VHD.URI.ToString()
-					$storageAccName = ($vhdURI.Substring(0,$vhdURI.IndexOf("."))).Replace("https://","")
+					$storageAccName = $vhdURI.Split(".")[0].Replace("https://","") 
+					#$storageAccName = ($vhdURI.Substring(0,$vhdURI.IndexOf("."))).Replace("https://","")
+					$containerName = $vhdURI.Split("/")[3]
+					$blobName = $vhdURI.Split("/")[4]
 					$storageAcc = $vhdList | ? {$_.StorageAccountName -eq "$storageAccName" }
 					$vhdSKU = $storageAcc.Sku.Name.ToString().Insert($storageAcc.Sku.Name.ToString().Length-3,"_")
                 
 				} catch {
 					Write-Log "Error Getting Storage account details" -Level Error -Path $logf
 					Write-Log $_ -Level Error -Path $logf
+					Exit
+				}
+
+				#breaking the lease on the VHD blob
+				try {
+					$storageAccessKey = (Get-AzureRmStorageAccountKey -ResourceGroupName $storageAcc.ResourceGroupName -Name $storageAcc.StorageAccountName).Value[0]
+					$storageContext = New-AzureStorageContext -StorageAccountName $storageAcc.StorageAccountName -StorageAccountKey $storageAccessKey -ErrorAction Stop
+					$blob = Get-AzureStorageBlob -Context $storageContext -Container $containerName -Blob $blobName -ErrorAction Stop
+					$leaseStatus = $blob.ICloudBlob.Properties.LeaseStatus
+
+					If($leaseStatus -eq "Locked") {
+						$blob.ICloudBlob.BreakLease() 
+						Write-Host "Successfully broken lease on $BlobName" 
+					} else { 
+						#$blob.ICloudBlob.AcquireLease($null, $null, $null, $null, $null) 
+						Write-Host "The $BlobName lease is already unlocked" 
+					}
+				} catch {
+					$_ | Write-Log -Path $logf -Level Error
 					Exit
 				}
             
@@ -159,79 +181,49 @@ function Convert-UnManagedDiskToManaged {
 		Exit
 	}
 
-	#Get VM
+	#Get VMObject
 	Write-Log "Getting vm: $VMName in resource group: $RGName" -Path $logf
 	$vmObject = Get-AzureRmVM -ResourceGroupName $RGName -Name $VMName
-
 	if($vmObject -eq $null) {
 		Write-Log "Error getting VM: $VMName" -Level Error -Path $logf
 		Exit
 	} 
-	else {
-		Write-log "vmObject:" -Path $logf
-		$vmObject | ConvertTo-Json | Write-Log -Path $logf
+	
+	Write-log "vmObject:" -Path $logf
+	$vmObject | ConvertTo-Json | Write-Log -Path $logf
 
-		#Check VM agent status
-		Write-Log "Checking VM agent status" -Path $logf
-		$vmStatus = Get-AzureRmVM -ResourceGroupName $rgName -Name $vmName -Status
-		if($vmStatus.vmAgent -ne $null) {
-			if($vmStatus.VMAgent.Statuses.Code -Match "ProvisioningState/succeeded" -and $vmStatus.VMAgent.Statuses.DisplayStatus -eq "Ready") {
-				Write-Log "VM agent is in Ready state. Proceeding." -Path $logf
-			}
-			else {
-				Write-Log "VM agent is not in Ready state. Please logonto the VM and ensure that the `"Windows Azure Guest Agent`" service is running. Exiting." -Path $logf
-				Exit
-			}
+	#Stop the VM if it is running
+	$vmstatus = $vmObject | Get-AzureRmVM -Status
+	if ($vmstatus.Statuses[1].Code -ne "PowerState/deallocated") {
+		$stopVM = Invoke-VMTask -vmobj $vmObject -operation Stop
+		if ($stopVM -eq $false) {
+			exit
 		}
-		else {
-			Write-Log "Cannot determine VM agent status. Confirm that the agent is installed and communicating with Azure - https://docs.microsoft.com/en-us/azure/virtual-machines/windows/agent-user-guide. Exiting." -Path $logf
-			Exit
-		}
-
-		if($vmObject.StorageProfile.ImageReference -ne $null) {
-			Write-Log "VM has image reference. Reference will be removed for the storage conversion process" -Level Warn -Path $logf
-			$vmObject.StorageProfile.ImageReference = $null
-		}
-
-		if($vmObject.OSProfile -ne $null) {
-			Write-Log "VM has OS profile. Settings will be removed for the storage conversion process" -Level Warn -Path $logf
-			$vmObject.OSProfile = $null
-		}
-
-		#setting the disk Objects
-		$osDisk = $vmObject.StorageProfile.OSDisk
-		$dataDisks = $vmObject.StorageProfile.DataDisks
-		$vhds = Get-AzureRmStorageAccount
-
-		#deleting the existing VM and release all Locks / ETC.
-		try {
-			Write-Log "Removing VM: $VMName" -Level Warn -Path $logf
-			$vmResult = Remove-AzureRmVM -ResourceGroupName $vmObject.ResourceGroupName -Name $vmObject.Name -Force
-		} catch {
-			Write-Log "Error deleting VM." -Level Error -Path $logf
-			$vmResult | ConvertTo-Json | Write-Log -Level Error -Path $logf
-			Exit
-		}
-
-		#converting OS disk from  un-managed to managed disks and attaaching to the VM
-		$newVM = Convert-ToManagedDisk -DiskProfile $osDisk -OldVMObject $vmObject -VHDList $vhds
-
-		#converting DATA disks from un-managed to managed disks and attaching them to the $newVM object(already has the OSDisk attached)
-		$lun = 0
-		foreach ($dataDisk in $dataDisks) {
-			$newVM = Convert-ToManagedDisk -DiskProfile $dataDisk -OldVMObject $newVM -VHDList $vhds -DataDiskLun $lun 
-			$lun++
-		}
-    
-		#re-create the VM
-		Write-Log "Re-Creating the VM using the new managed OS + Data Disks" -Path $logf
-		New-AzureRmVM -VM $newVM -ResourceGroupName $newVM.ResourceGroupName -Location $newVM.Location
-		if (!$?) {
-			Write-Log $_ -Level Error -Path $logf
-			Exit
-		}
-		Write-Log "VM $($newVM.Name) created" -Path $logf
-		Write-Log "Recommended to clean up the old un-Managed Disks" -Path $logf
-		Write-Log "--END: Convert-UnManagedToManaged for $VMName" -Path $logf
 	}
+
+	#setting the disk Objects
+	$osDisk = $vmObject.StorageProfile.OSDisk
+	$dataDisks = $vmObject.StorageProfile.DataDisks
+	$vhds = Get-AzureRmStorageAccount
+	
+	#converting OS disk from  un-managed to managed disks and attaaching to the VM
+	$newVM = Convert-ToManagedDisk -DiskProfile $osDisk -OldVMObject $vmObject -VHDList $vhds
+
+	#converting DATA disks from un-managed to managed disks and attaching them to the $newVM object(already has the OSDisk attached)
+	$lun = 0
+	foreach ($dataDisk in $dataDisks) {
+		$newVM = Convert-ToManagedDisk -DiskProfile $dataDisk -OldVMObject $newVM -VHDList $vhds -DataDiskLun $lun 
+		$lun++
+	}
+    
+	#re-create the VM
+	Write-Log "Re-Creating the VM using the new managed OS + Data Disks" -Path $logf
+	New-AzureRmVM -VM $newVM -ResourceGroupName $newVM.ResourceGroupName -Location $newVM.Location
+	if (!$?) {
+		Write-Log $_ -Level Error -Path $logf
+		Exit
+	}
+	Write-Log "VM $($newVM.Name) created" -Path $logf
+	Write-Log "Recommended to clean up the old un-Managed Disks from the storage accounts" -Path $logf
+	Write-Log "--END: Convert-UnManagedToManaged for $VMName" -Path $logf
 }
