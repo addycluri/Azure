@@ -17,7 +17,6 @@ This is a powershell module with custom functions designed for specific Azure re
 * **Convert-AVSetManagedToUnManaged** : converts an existing managed Availability Set to un-managed
 * **Convert-AvSetUnManagedToManaged** : converts an existing un-managed Availability Set to managed
 * **Convert-ManagedDiskToUnManaged** : converts the attached storage of a VM from managed --> unmanaged
-* **Convert-UnManagedDiskToManaged** : converts the attached storage of a VM from un-managed --> managed
 * **Get-VmDiskMapping** : Gets the VM to Disk mapping details.
 * **New-AzFileShare** : create a new Azure File share
 * **Write-Log** : Logs/writes data to an external file.
