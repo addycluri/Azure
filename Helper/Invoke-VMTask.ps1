@@ -1,7 +1,6 @@
 <#
     .SYNOPSIS
-        Function to help start/stop a VM
-            
+        Function to help start/stop a VM            
      
     .EXAMPLE
 		Start a VM 
@@ -12,6 +11,11 @@
 		Stop a VM 
 		PS | C:\Users\ > $vmObject = Get-AzureRmVM -ResourceGroupName "my-rg" -Name "my-vm"
 		PS | C:\Users\ > Invoke-VMTask -vmobj $vmObject -operation Stop
+
+	.EXAMPLE
+		Restart a VM 
+		PS | C:\Users\ > $vmObject = Get-AzureRmVM -ResourceGroupName "my-rg" -Name "my-vm"
+		PS | C:\Users\ > Invoke-VMTask -vmobj $vmObject -operation Restart
 #>
 
 function Invoke-VMTask {
@@ -21,8 +25,8 @@ function Invoke-VMTask {
         [PSObject]$vmobj,
 
         [Parameter(Mandatory=$true)] 
-        [ValidateSet("Start","Stop")] 
-        [string]$operation
+        [ValidateSet("Start","Stop","Restart")] 
+        [string]$Operation
     )
 
     #variable initialize
@@ -38,6 +42,10 @@ function Invoke-VMTask {
                 Write-Verbose "Stopping VM - $($vmobj.Name)"
                 $vmTask = $vmobj | Stop-AzureRmVM -AsJob -Force
             }
+			"Restart" {
+				Write-Verbose "Restarting VM - $($vmobj.Name)"
+                $vmTask = $vmobj | Restart-AzureRmVM -AsJob -Force
+			}
         }
     
         do {

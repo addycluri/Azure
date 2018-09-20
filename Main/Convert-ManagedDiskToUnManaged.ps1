@@ -19,26 +19,22 @@
     .EXAMPLE
         Convert the attached disks from managed --> unmanaged for a VM called MY-VM in the MY-RG resourceGroup.
 		
-		PS | C:\Users\ > Convert-ManagedDiskToUnManaged -TenantId blahacb5-a79a-4ca7-87eb-c5e6ebbbcd00 -SubscriptionId bl9ahe24-769d-44f2-92ff-4e0fb55d2f01 -VMName "MY-VM" -ResourceGroupName "MY-RG" -verbose
+		PS | C:\Users\ > Convert-ManagedDiskToUnManaged -VMName "MY-VM" -ResourceGroupName "MY-RG" -verbose
 #>
 
 function Convert-ManagedDiskToUnmanaged {
 	
 
 	Param(
-		[Parameter(Mandatory=$true)] 
-		[string]$TenantId,
-
-		[Parameter(Mandatory=$true)]
-		[string]$SubscriptionId,
-
 		[Parameter(Mandatory=$true)]
 		[Alias("ResourceGroupName")] 
 		[string]$RGName,
 
 		[Parameter(Mandatory=$true)]
-		[string]$VMName
+		[string]$VMName,
 
+		[Parameter(ValueFromPipelineByPropertyName=$true)]
+		[string]$Logfile
 	)
 
 	function Generate-AzureStorageAccountName {
@@ -201,22 +197,13 @@ function Convert-ManagedDiskToUnmanaged {
 	$managedDisk = $null
 	$vhdSku = $null
 	$vmStatus = $null
-	$logf = $PWD.Path + "\$($VMName)-ManagedToUnmanaged-" + $(Get-Date -uFormat %m%d%Y-%H%M%S) + ".TXT"
+	if ($Logfile -eq $null) {
+		$logf = $PWD.Path + "\$($VMName)-ManagedToUnmanaged-" + $(Get-Date -uFormat %m%d%Y-%H%M%S) + ".TXT"
+	}	
 
 	Write-Log "Parameters:" -Path $logf
-	Write-Log "tenandId: $TenantId" -Path $logf
-	Write-Log "subscriptionId: $subscriptionId" -Path $logf
 	Write-Log "ResourceGroupName: $RGName" -Path $logf
 	Write-Log "VMName: $VMName" -Path $logf
-
-	#Select Subscription
-	Write-Log "Getting subscription: $subscriptionId for tenant: $TenantId"  -Path $logf
-	$subscription = Select-AzureRmSubscription -TenantId $TenantId -SubscriptionId $subscriptionId
-
-	if($subscription -eq $null) {
-		Write-Log "Error getting subscription: $subscriptionId" -Level Error -Path $logf
-		break
-	}
 
 	#Get VM
 	Write-Log "Getting vm: $VMName in resource group: $RGName" -Path $logf
@@ -262,7 +249,7 @@ function Convert-ManagedDiskToUnmanaged {
 		$dataDisks = $vmObject.StorageProfile.DataDisks
 		$mDiskList = Get-AzureRmDisk
 
-		##deleting the existing vm and release all locks / etc.
+		#deleting the existing vm and release all locks / etc.
 		try {
 			write-log "removing vm: $vmname" -level warn -path $logf
 			$vmresult = remove-azurermvm -resourcegroupname $vmobject.resourcegroupname -name $vmobject.name -force

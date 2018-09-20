@@ -25,12 +25,6 @@ function Get-VmDiskMapping {
 	)]
 
 	Param(
-		[Parameter(Mandatory=$true)] 
-		[string]$TenantId,
-
-		[Parameter(Mandatory=$true)]
-		[string]$SubscriptionId,
-
 		[Parameter()]
 		[Alias("ResourceGroupName")]
 		[string]$RGName
@@ -127,12 +121,6 @@ function Get-VmDiskMapping {
 	}
 
 ################################ MAIN #################################################################
-
-	#Select Subscription
-	$subscription = Select-AzureRmSubscription -TenantId $TenantId -SubscriptionId $SubscriptionId
-	if($subscription -eq $null) {
-		Exit
-	}
 
 	#Get ALL VMs or the ones in the RG specified
 	if ($RGName) {

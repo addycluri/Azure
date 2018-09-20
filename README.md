@@ -19,6 +19,7 @@ This is a powershell module with custom functions designed for specific Azure re
 * **Convert-ManagedDiskToUnManaged** : converts the attached storage of a VM from managed --> unmanaged
 * **Get-VmDiskMapping** : Gets the VM to Disk mapping details.
 * **New-AzFileShare** : create a new Azure File share
+* **Invoke-VMTask** : Execute operations on an Azure VM.
 * **Write-Log** : Logs/writes data to an external file.
 
 # Disclaimer
