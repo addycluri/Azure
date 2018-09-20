@@ -1,31 +1,29 @@
 ﻿<#
     .SYNOPSIS
-        Convert-ManagedToUnManaged converts the attached storage of a VM from managed --> unmanaged
-		**PLEASE BE ADVISED THERE WILL BE DOWNTIME INCURRED ON THE VM **
+        **PLEASE BE ADVISED THERE WILL BE DOWNTIME INCURRED ON THE VM **
+        Convert-ManagedDiskToUnManaged converts the attached storage of a VM from managed --> unmanaged
+        
             
     .DESCRIPTION
-        Convert-ManagedToUnManaged can be used in a scenario where one needs to  change the storage type of a VM from Managed To Unmanaged either for a migration temporarily or for any other purposes.
+        Convert-ManagedDiskToUnManaged can be used in a scenario where one needs to  change the storage type of a VM from Managed To Unmanaged either for a migration temporarily or for any other purposes.
 
         The typical workflow of this process is as follows.
             - Get the current VMObject
-            - Delete the current VM to release the locks/Leases on the managed disks. (All data like OS & Data disks are preserved although some aspects like VM extensions, ETC. have to be reconfigured later on)
+            - Delete the current VM (does not destroy disks although installed extensions are lost) to release the locks/Leases on the disks.
             - Create a temporary storage account to store the VHD's in the same resource group where the OS disk currently resides.
             - COPY all OS & Data disks to the temp storage account
-            - update the VMObject with the new VHD URI's
-            - re-create the VM using VMobject       
+            - update the VMObject with the new OSDISK VHD URI
+            - re-creates the updated VM
+			- converts the data disks to unmanaged and attaches the VHD's to the VM (since you cannot add unmanaged data disk(s) using command line during VM creation)
     
     .EXAMPLE
         Convert the attached disks from managed --> unmanaged for a VM called MY-VM in the MY-RG resourceGroup.
 		
-		PS | C:\Users\ > Convert-ManagedToUnManaged -TenantId blahacb5-a79a-4ca7-87eb-c5e6ebbbcd00 -SubscriptionId bl9ahe24-769d-44f2-92ff-4e0fb55d2f01 -VMName "MY-VM" -ResourceGroupName "MY-RG" -verbose
+		PS | C:\Users\ > Convert-ManagedDiskToUnManaged -TenantId blahacb5-a79a-4ca7-87eb-c5e6ebbbcd00 -SubscriptionId bl9ahe24-769d-44f2-92ff-4e0fb55d2f01 -VMName "MY-VM" -ResourceGroupName "MY-RG" -verbose
 #>
 
 function Convert-ManagedDiskToUnmanaged {
 	
-	[CmdletBinding( 
-		SupportsShouldProcess=$True, 
-		ConfirmImpact="Low"  
-	)]
 
 	Param(
 		[Parameter(Mandatory=$true)] 
@@ -40,14 +38,35 @@ function Convert-ManagedDiskToUnmanaged {
 
 		[Parameter(Mandatory=$true)]
 		[string]$VMName
+
 	)
 
+	function Generate-AzureStorageAccountName {
+		Param()
+
+		$tempName = $null
+		$available = $false
+
+		Write-Log "Generating Temporary Storage Account Name" -Path $logf
+
+		Do {
+			$tempName = (New-Guid).Guid.ToString().Replace("-","").Substring(0,3) + $VMName.Replace("-","").ToLower()
+			$available = (Get-AzureRmStorageAccountNameAvailability -Name $tempName).NameAvailable
+		}
+		Until ($available)
+   
+		return $tempName
+	}
 
 	function Convert-ToUnManagedDisk {
 		Param(
 			[Parameter(Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
 			[ValidateNotNullOrEmpty()]
-			[PSObject]$diskProfile,
+			[PSObject]$diskObject,
+
+			[Parameter(Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
+			[ValidateSet("OSDISK","DATADISK")]
+			[PSObject]$diskPurpose,
 
 			[Parameter(Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
 			[ValidateNotNullOrEmpty()]
@@ -72,7 +91,6 @@ function Convert-ManagedDiskToUnmanaged {
 		)
 
 		begin {
-			$diskPurpose = $null
 			$diskType = $null
 			$vhdURI = $null
 			$newVMObject = $null
@@ -82,41 +100,36 @@ function Convert-ManagedDiskToUnmanaged {
 				$storageAccountContainer = Get-AzureStorageContainer -Context $StorageAccContext -Name "vhds"
 			} catch {
 				Write-Log $_ -Level Error -Path $logf
-				Exit
-			}
-
-			#settting disk profiles
-			if ($diskProfile.OSType -ne $null) {
-				$diskPurpose = "OS DISK"
-			} else {
-				$diskPurpose = "DATA DISK"
+				exit
 			}
 
 			#creating a new VMObject to map the disk properties
 			$newVMObject = $OldVMObject
-			$newVMObject.StorageProfile.OsDisk = $null
 		}
 
 		process {
 
-			if ($diskProfile.ManagedDisk -ne $null) {
+			# If disk is managed we convert to unmanaged.
+			if ($diskObject.ManagedDisk -ne $null) {
             
 				$diskType = "MANAGED"
 
 				try {
-					Write-Log "$diskPurpose of type $diskType Found - $($diskProfile.Name). Will convert this to an unmanaged disk" -Level Warn -Path $logf
+					Write-Log "$diskPurpose of type $diskType Found - $($diskObject.Name). Will convert this to an unmanaged disk" -Level Warn -Path $logf
                         
 					#granting access to managed disk and initiating copy process to new temp storage account
-					Write-Log "Granting access to managed Disk: $($DiskProfile.ManagedDisk.Id)" -Path $logf
-					$mDiskObj = $ManagedDisks | Where-Object {$_.Id -eq $DiskProfile.ManagedDisk.Id }
+					Write-Log "Granting access to managed Disk: $($diskObject.ManagedDisk.Id)" -Path $logf
+					$mDiskObj = $ManagedDisks | Where-Object {$_.Id -eq $diskObject.ManagedDisk.Id }
 					$vhdname = $mDiskObj.Name + ".vhd"
+					$sasUri = (Grant-AzureRmDiskAccess -ResourceGroupName $mDiskObj.ResourceGroupName -DiskName $mDiskObj.Name -Access Read -DurationInSecond 7200).AccessSAS
+					Write-Log "SASUri generated for managed Disk: $($diskObject.Name)" -Path $logf
 
-					$DebugPreference = 'Continue'
-					$sas = Grant-AzureRmDiskAccess -ResourceGroupName $mDiskObj.ResourceGroupName -DiskName $mDiskObj.Name -Access Read -DurationInSecond 7200 5>&1
-					$DebugPreference = 'SilentlyContinue'
-					$sasUri = ((($sas | where {$_ -match "accessSAS"})[-1].ToString().Split("`n") | where {$_ -match "accessSAS"}).Split(' ') | where {$_ -match "https"}).Replace('"','')
+					#$DebugPreference = 'Continue'
+					#$sas = Grant-AzureRmDiskAccess -ResourceGroupName $mDiskObj.ResourceGroupName -DiskName $mDiskObj.Name -Access Read -DurationInSecond 7200 5>&1
+					#$DebugPreference = 'SilentlyContinue'
+					#$sasUri = ((($sas | where {$_ -match "accessSAS"})[-1].ToString().Split("`n") | where {$_ -match "accessSAS"}).Split(' ') | where {$_ -match "https"}).Replace('"','')
 
-					Write-Log "Copying managed disk to temporary storage account - $($StorageAccount.Name) " -Path $logf
+					Write-Log "Copying managed disk to temporary storage account - $($StorageAccount.StorageAccountName) " -Path $logf
 					$copy = Start-AzureStorageBlobCopy -AbsoluteUri $sasUri -DestContainer $storageAccountContainer.Name -DestContext $StorageAccContext -DestBlob $vhdname
         
 					Do {
@@ -128,55 +141,52 @@ function Convert-ManagedDiskToUnmanaged {
 					if ($state.Status -ne "Success") {
 						Write-Log "Copy job failed" -Level Error -Path $logf
 						$state | ConvertTo-Json | Write-Log
-						Exit
+						exit
 					}
                 
 					Write-Log "Copy job complete" -Path $logf
 					$vhdURI = $StorageAccount.PrimaryEndpoints.Blob + $storageAccountContainer.Name + "/" + $vhdname
-					Write-Log "Temp Disk VHDURI: $vhdURI" -Path $logf
-
+					Write-Log "$diskPurpose VHDURI: $vhdURI" -Path $logf
+					
 				} catch {
 					Write-Log $_ -Level Error -Path $logf
-					Exit                
+					exit                
 				}
-			}
-
-			# If the disks are UN-MANAGED. We do nothing
-			else {
+			} else {
+				# If the disks are UN-MANAGED. We do nothing
 				$diskType = "UN-MANAGED"
-				Write-Log "$diskPurpose of type $diskType Found: $($diskProfile.Name). NO action item so skipping" -Level Warn -Path $logf
-				$vhdURI = $diskProfile.Vhd.Uri
+				Write-Log "$diskPurpose of type $diskType Found: $($diskObject.Name). No changes required" -Level Warn -Path $logf
+				$vhdURI = $diskObject.Vhd.Uri
 				Write-Log "$diskPurpose VHDURI: $vhduri" -Path $logf
 			}
 
-			#updating $newVMObject with the new Disks
+			# Attaching / handling the new un-managed disks
 			try {
 				$name = $null
 				$name = $vhdURI.ToString().Substring($vhdURI.lastIndexOf("/")+1)
-                
-				#Attaching OS disks
-				if ($diskPurpose -eq "OS DISK") {
-					if($diskProfile.OSType -eq "Windows") {
+
+				if ($diskPurpose -eq "OSDISK") {
+					if($diskObject.OSType -eq "Windows") {
 						Write-Log "Attaching WINDOWS `"$diskPurpose`" - $vhdURI to $($newVMObject.Name)" -Path $logf
-						$newVMObject =  Set-AzureRmVMOSDisk -VM $newVMObject -Name $name -VhdUri $vhdURI -DiskSizeInGB $diskProfile.DiskSizeGB -CreateOption Attach -Windows
+						$newVMObject =  Set-AzureRmVMOSDisk -VM $newVMObject -Name $name -VhdUri $vhdURI -DiskSizeInGB $diskObject.DiskSizeGB -CreateOption Attach -Windows -ErrorAction Stop
                         
 					} else {
 						Write-Log "Attaching LINUX `"$diskPurpose`" -  $vhdURI to $($newVMObject.Name)" -Path $logf
-						$newVMObject =  Set-AzureRmVMOSDisk -VM $newVMObject -Name $name -VhdUri $vhdURI -DiskSizeInGB $diskProfile.DiskSizeGB -CreateOption Attach -Linux
+						$newVMObject =  Set-AzureRmVMOSDisk -VM $newVMObject -Name $name -VhdUri $vhdURI -DiskSizeInGB $diskObject.DiskSizeGB -CreateOption Attach -Linux -ErrorAction Stop
 					}
-				} 
-				#Attaching Data disks
-				elseif ($diskPurpose -eq "DATA DISK") {
-					Write-Log "Attaching $vhdURI to $($newVMObject.Name) at LUN - $DataDiskLun" -Path $logf
-					$newVMObject =  Add-AzureRmVMDataDisk -VM $newVMObject -Name $name -VhdUri $vhdURI -Lun $DataDiskLun -DiskSizeInGB $diskProfile.DiskSizeGB -CreateOption Attach
+
+					return $newVMObject
 				}
-            
-			} catch {
+				if ($diskPurpose -eq "DATADISK") {
+					Write-Log "Adding $vhdURI to VM - $($newVMObject.Name)" -Path $logf
+					Add-AzureRmVMDataDisk -VM $newVMObject -Name $name -VhdUri $vhdURI -Lun $DataDiskLun -DiskSizeInGB $diskObject.DiskSizeGB -CreateOption Attach -ErrorAction Continue
+					Update-AzureRmVM -ResourceGroupName $newVMObject.ResourceGroupName -VM $newVMObject -ErrorAction Stop
+				}
+			} 
+			catch {
 				Write-Log $_ -Level Error -Path $logf
-				Exit
-			}
-			#return the newdisk object
-			return $newVMObject
+				exit
+			}			
 		}
 	}
 
@@ -189,23 +199,6 @@ function Convert-ManagedDiskToUnmanaged {
 	$vmResult = $null
 	$mDiskList = $null
 	$managedDisk = $null
-
-	function Generate-AzureStorageAccountName {
-		Param()
-
-		$tempName = $null
-		$available = $false
-
-		Write-Log "Generating Temporary Storage Account Name" -Path $logf
-
-		Do {
-			$tempName = (New-Guid).Guid.ToString().Replace("-","").Substring(0,3) + $VMName.Replace("-","").ToLower()
-			$available = (Get-AzureRmStorageAccountNameAvailability -Name $tempName).NameAvailable
-		}
-		Until ($available)
-   
-		return $tempName
-	}
 	$vhdSku = $null
 	$vmStatus = $null
 	$logf = $PWD.Path + "\$($VMName)-ManagedToUnmanaged-" + $(Get-Date -uFormat %m%d%Y-%H%M%S) + ".TXT"
@@ -222,7 +215,7 @@ function Convert-ManagedDiskToUnmanaged {
 
 	if($subscription -eq $null) {
 		Write-Log "Error getting subscription: $subscriptionId" -Level Error -Path $logf
-		Exit
+		break
 	}
 
 	#Get VM
@@ -245,12 +238,12 @@ function Convert-ManagedDiskToUnmanaged {
 				Write-Log "VM agent is in Ready state. Proceeding." -Path $logf
 			}
 			else {
-				Write-Log "VM agent is not in Ready state. Please logonto the VM and ensure that the `"Windows Azure Guest Agent`" service is running. Exiting." -Path $logf
+				Write-Log "VM agent is not in Ready state. Please logonto the VM and ensure that the `"Windows Azure Guest Agent`" service is running. breaking." -Path $logf
 				break
 			}
 		}
 		else {
-			Write-Log "Cannot determine VM agent status. Confirm that the agent is installed and communicating with Azure - https://docs.microsoft.com/en-us/azure/virtual-machines/windows/agent-user-guide. Exiting." -Path $logf
+			Write-Log "Cannot determine VM agent status. Confirm that the agent is installed and communicating with Azure - https://docs.microsoft.com/en-us/azure/virtual-machines/windows/agent-user-guide. breaking." -Path $logf
 			break
 		}
 
@@ -269,14 +262,14 @@ function Convert-ManagedDiskToUnmanaged {
 		$dataDisks = $vmObject.StorageProfile.DataDisks
 		$mDiskList = Get-AzureRmDisk
 
-		#deleting the existing VM and release all Locks / ETC.
+		##deleting the existing vm and release all locks / etc.
 		try {
-			Write-Log "Removing VM: $VMName" -Level Warn -Path $logf
-			$vmResult = Remove-AzureRmVM -ResourceGroupName $vmObject.ResourceGroupName -Name $vmObject.Name -Force
+			write-log "removing vm: $vmname" -level warn -path $logf
+			$vmresult = remove-azurermvm -resourcegroupname $vmobject.resourcegroupname -name $vmobject.name -force
 		} catch {
-			Write-Log "Error deleting VM." -Level Error -Path $logf
-			$vmResult | ConvertTo-Json | Write-Log -Level Error -Path $logf
-			Exit
+			write-log "error deleting vm." -level error -path $logf
+			$vmresult | convertto-json | write-log -level error -path $logf
+			break
 		}
 
 		#creating a temporary storage account using the properties of the OS disk to host the un-managed VHDs
@@ -294,24 +287,32 @@ function Convert-ManagedDiskToUnmanaged {
 		$vmObject.StorageProfile.DataDisks = $null
         
 		#converting OS disk from  managed to unmanaged disks and attaaching new disks to the VM
-		$newVM = Convert-ToUnManagedDisk -DiskProfile $osDisk -StorageAccount $tempStorageAcc -StorageAccContext $tempStorageAccountContext -managedDisks $mDiskList -OldVMObject $vmObject
+		$newVM = Convert-ToUnManagedDisk -DiskObject $osDisk -DiskPurpose "OSDISK" -StorageAccount $tempStorageAcc -StorageAccContext $tempStorageAccountContext -managedDisks $mDiskList -OldVMObject $vmObject
 
-		#converting DATA disks from managed to unmanaged disks and attaching them to the $newVM object(already has the OSDisk attached)
-		$lun = 0
-		foreach ($dataDisk in $dataDisks) {
-			$newVM = Convert-ToUnManagedDisk -DiskProfile $dataDisk -StorageAccount $tempStorageAcc -StorageAccContext $tempStorageAccountContext -managedDisks $mDiskList -OldVMObject $newVM -DataDiskLun $lun
-			$lun++
-		}
-    
-		#re-create the VM
-		Write-Log "Re-Creating the VM using the new un-managed OS + Data Disks" -Path $logf
-		New-AzureRmVM -VM $newVM -ResourceGroupName $newVM.ResourceGroupName -Location $newVM.Location
+		# re-create the VM with the new OS disk. (Since creating VM with un-managed "data" disks is not supported using the CLI)
+		Write-Log "Re-Creating the VM using the new un-managed OS Disk" -Path $logf
+		New-AzureRmVM -VM $newVM -ResourceGroupName $newVM.ResourceGroupName -Location $newVM.Location -ErrorAction Stop
 		if (!$?) {
 			Write-Log $_ -Level Error -Path $logf
-			Exit
+			break
 		}
 		Write-Log "VM $($newVM.Name) created" -Path $logf
-		Write-Log "Recommended to clean up the old Managed Disks" -Path $logf
-		Write-Log "--END: Convert-ManagedToUnManaged for $VMName" -Path $logf
+		Write-Log "sleep 75 Seconds for the VM properties to be refreshed" -Path $logf
+		Start-Sleep -Seconds 75
+
+		#Get the new VMobject
+		$newVM = Get-AzureRmVM -ResourceGroupName $newVM.ResourceGroupName -Name $newVM.Name
+		$newVM.StorageProfile.DataDisks = $null
+
+		# converting DATA disks from managed to unmanaged disks, attach them to the $newVM object(already has the OSDisk attached) and restart the VM
+        $lun = 0
+        $umDataDisk = $null
+        foreach ($dataDisk in $dataDisks) {
+			Write-Log "converting $($dataDisk.Name) to unmanaged" -Path $logf
+            Convert-ToUnManagedDisk -DiskObject $dataDisk -DiskPurpose "DATADISK" -StorageAccount $tempStorageAcc -StorageAccContext $tempStorageAccountContext -managedDisks $mDiskList -DataDiskLun $lun -OldVMObject $newVM
+            $lun++
+        }		
+		Write-Log "Recommended to clean up the old Managed Disks AND add/reconfigure VM extensions, other dependencies if present earlier" -level Warn -Path $logf
+		Write-Log "--END: Convert-ManagedDiskToUnManaged for $VMName" -Path $logf
 	}
 }
