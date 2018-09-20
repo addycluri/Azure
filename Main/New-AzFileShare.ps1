@@ -3,7 +3,7 @@
         New-AzFileShare helps create a new Azure File share
             
     .DESCRIPTION
-        Using the storage account name along with the container/sharename, New-AzFileShare will create Azure file share.
+        Use the storage account name along with the container/sharename to create a new Azure file share.
      
     .EXAMPLE
 		Create an azure file share called "MyAzFileShare" under the storage account "MyStorageAcc"
@@ -11,7 +11,7 @@
 		PS | C:\Users\ | 02-28-2018 23:14:27 > New-AzFileShare -ShareName "MyAzFileShare" -StorageAccountName "MyStorageAcc" -ResourceGroupName "MyRG"
 #>
 
-function New-AzFileShare {
+function New-AZFileShare {
 
 	[CmdletBinding( 
 		SupportsShouldProcess=$True, 

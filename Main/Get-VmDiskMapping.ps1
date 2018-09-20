@@ -9,7 +9,7 @@
     .EXAMPLE
 		Get the VM-Disk mapping for all virtual machines in a particular subscription
 		
-		PS | C:\Users\ > Get-VMDiskMapping -TenantId blahacb5-a79a-4ca7-87eb-c5e6ebbbcd00 -SubscriptionId bl9ahe24-769d-44f2-92ff-4e0fb55d2f01 -Verbose
+		PS | C:\Users\ > Get-VMDiskMapping -Verbose
                     
     .EXAMPLE
         Get the VM-Disk mapping for all virtual machines in Resource group called MY-RG
