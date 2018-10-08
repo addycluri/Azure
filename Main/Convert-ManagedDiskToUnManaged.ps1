@@ -197,7 +197,7 @@ function Convert-ManagedDiskToUnmanaged {
 	$managedDisk = $null
 	$vhdSku = $null
 	$vmStatus = $null
-	if ($Logfile -eq $null) {
+	if (-not $Logfile) {
 		$logf = $PWD.Path + "\$($VMName)-ManagedToUnmanaged-" + $(Get-Date -uFormat %m%d%Y-%H%M%S) + ".TXT"
 	}	
 

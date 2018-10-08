@@ -98,7 +98,7 @@ function Convert-AVSetManagedToUnManaged {
 				$storageAccountContainer = Get-AzureStorageContainer -Context $StorageAccContext -Name "vhds"
 			} catch {
 				Write-Log $_ -Level Error -Path $logf
-				exit
+				break
 			}
 
 			#creating a new VMObject to map the disk properties
@@ -133,7 +133,7 @@ function Convert-AVSetManagedToUnManaged {
 					if ($state.Status -ne "Success") {
 						Write-Log "Copy job failed" -Level Error -Path $logf
 						$state | ConvertTo-Json | Write-Log
-						exit
+						break
 					}
                 
 					Write-Log "Copy job complete" -Path $logf
@@ -142,7 +142,7 @@ function Convert-AVSetManagedToUnManaged {
 					
 				} catch {
 					Write-Log $_ -Level Error -Path $logf
-					exit                
+					break                
 				}
 			} else {
 				# If the disks are UN-MANAGED. We do nothing
@@ -177,7 +177,7 @@ function Convert-AVSetManagedToUnManaged {
 			} 
 			catch {
 				Write-Log $_ -Level Error -Path $logf
-				exit
+				break
 			}			
 		}
 	}
@@ -188,7 +188,7 @@ function Convert-AVSetManagedToUnManaged {
 	#variable intializations
 	$subscription = $null
 	$avsObject = $null
-	if ($logfile -eq $null) {
+	if (-not $logfile) {
 		$logf = $PWD.Path + "\$($AvailabilitySetName)-ManagedToUnmanaged-" + $(Get-Date -uFormat %m%d%Y-%H%M%S) + ".TXT"
 	}
 
@@ -203,7 +203,7 @@ function Convert-AVSetManagedToUnManaged {
 	#proceed with the execution only if the AV-Object is returned
 	if($avsObject -eq $null) {
 		Write-Log "Error getting AV-Set object: $AvailabilitySetName" -Level Error -Path $logf
-		Exit
+		break
 	} else {    
 		Write-log "AV-set Object:" -Path $logf
 		$avsObject | ConvertTo-Json | Write-Log -Path $logf
@@ -211,16 +211,16 @@ function Convert-AVSetManagedToUnManaged {
 		#check for VMs in the AV-Set
 		$avsVMs = $avsObject.VirtualMachinesReferences
 		if ($avsVMs.Count -eq 0) {
-			Write-Log "No VMs found in the AV-Set : $AvailabilitySetName. Exiting" -Path $logf
-			Exit
+			Write-Log "No VMs found in the AV-Set : $AvailabilitySetName. breaking" -Path $logf
+			break
 		} else {
 			#create a new un-managed AV-set
 			try {            
-				$newAvsObject = New-AzureRmAvailabilitySet -Location $avsObject.location -Name ($avsObject.Name + "-updated") -ResourceGroupName $avsObject.ResourceGroupName -PlatformFaultDomainCount $avsObject.PlatformFaultDomainCount -PlatformUpdateDomainCount $avsObject.PlatformUpdateDomainCount
+				$newAvsObject = New-AzureRmAvailabilitySet -Location $avsObject.location -Name ($avsObject.Name + "-unmanaged") -ResourceGroupName $avsObject.ResourceGroupName -PlatformFaultDomainCount $avsObject.PlatformFaultDomainCount -PlatformUpdateDomainCount $avsObject.PlatformUpdateDomainCount
 				Write-log "Created an un-managed Availability Set to support un-managed disks - $($newAvsObject.Name)" -Path $logf            
 			}  catch {
 				$_ | Write-Log -Level Error -Path $logf
-				exit
+				break
 			}
 
 			#starting the conversion process for each VM in the availability set. 
@@ -247,8 +247,11 @@ function Convert-AVSetManagedToUnManaged {
 				$vmObject = Get-AzureRmVM -ResourceGroupName $RGName | Where-Object {$_.Id -eq $avsVM.Id}
 				if($vmObject -eq $null) {
 					Write-Log "Error getting VM object: $($avsVM.Id)" -Level Error -Path $logf
-					continue
-				}
+					break
+				} 
+
+				Write-log "vmObject:" -Path $logf
+				$vmObject | ConvertTo-Json | Write-Log -Path $logf
 
 				#Check VM agent status
 				Write-Log "Checking VM agent status for $($vmObject.Name)" -Path $logf
@@ -258,13 +261,13 @@ function Convert-AVSetManagedToUnManaged {
 						Write-Log "VM agent is in Ready state. Proceeding." -Path $logf
 					}
 					else {
-						Write-Log "VM agent is not in Ready state. Please logonto the VM and ensure that the `"Windows Azure Guest Agent`" service is running. Exiting." -Path $logf
-						Exit
+						Write-Log "VM agent is not in Ready state. Please logonto the VM and ensure that the `"Windows Azure Guest Agent`" service is running. breaking." -Path $logf
+						break
 					}
 				}
 				else {
-					Write-Log "Cannot determine VM agent status. Confirm that the agent is installed and communicating with Azure - https://docs.microsoft.com/en-us/azure/virtual-machines/windows/agent-user-guide. Exiting." -Path $logf
-					Exit
+					Write-Log "Cannot determine VM agent status. Confirm that the agent is installed and communicating with Azure - https://docs.microsoft.com/en-us/azure/virtual-machines/windows/agent-user-guide. breaking." -Path $logf
+					break
 				}
 
 				if($vmObject.StorageProfile.ImageReference -ne $null) {
@@ -289,7 +292,7 @@ function Convert-AVSetManagedToUnManaged {
 				} catch {
 					Write-Log "Error deleting VM." -Level Error -Path $logf
 					$vmResult | ConvertTo-Json | Write-Log -Level Error -Path $logf
-					Exit
+					break
 				}            
 
 				#creating a temporary storage account using the properties of the OS disk to host the un-managed VHDs
@@ -313,7 +316,7 @@ function Convert-AVSetManagedToUnManaged {
 				$newVM.AvailabilitySetReference.Id = $newAvsObject.Id
 
 				# re-create the VM with the new OS disk. (Since creating VM with un-managed "data" disks is not supported using the CLI)
-				Write-Log "Re-Creating the VM using the new un-managed OS Disk" -Path $logf
+				Write-Log "Re-Creating the VM using the new un-managed OS Disk and referencing the unmanaged AV-set $($newAvsObject.Id)" -Path $logf
 				New-AzureRmVM -VM $newVM -ResourceGroupName $newVM.ResourceGroupName -Location $newVM.Location -ErrorAction Stop
 				if (!$?) {
 					Write-Log $_ -Level Error -Path $logf

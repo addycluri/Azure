@@ -25,7 +25,7 @@ function Get-VmDiskMapping {
 	)]
 
 	Param(
-		[Parameter()]
+		[Parameter(ValueFromPipelineByPropertyName=$true)]
 		[Alias("ResourceGroupName")]
 		[string]$RGName
 	)
@@ -135,20 +135,20 @@ function Get-VmDiskMapping {
 		Write-Host " "
 		Write-Host "VMNAME - " $VM.Name
 		Write-Host "VM-RG - " $VM.ResourceGroupName
-    
-		if(($VM.StorageProfile).Count -gt 0) {
 
-			# getting disk(s) information
-			$ODisks = $VM.StorageProfile.OsDisk
-			$DataDisks = $VM.StorageProfile.DataDisks
-        
-			GetDiskDetails -diskObject $ODisks -VMDetail $VM
-			GetDiskDetails -diskObject $DataDisks -VMDetail $VM
-        
-			Write-Host "***********************************************************************************"
-		} else {
+		if($VM.StorageProfile -eq $null) {
 			Write-Host "No Storage Profile found for VM - $($VM.Name)" -ForegroundColor Red
-		}         
+			continue
+		}
+    
+		# getting disk(s) information
+		$ODisks = $VM.StorageProfile.OsDisk
+		$DataDisks = $VM.StorageProfile.DataDisks
+        
+		GetDiskDetails -diskObject $ODisks -VMDetail $VM
+		GetDiskDetails -diskObject $DataDisks -VMDetail $VM
+        
+		Write-Host "***********************************************************************************"
 	}
 
 	#Open the downloaded CSV Report

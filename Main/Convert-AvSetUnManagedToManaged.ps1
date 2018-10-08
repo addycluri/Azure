@@ -31,7 +31,10 @@ function Convert-AvSetUnmanagedToManaged {
 
 		[Parameter(Mandatory=$true)]
 		[Alias("AVSet")]
-		[string]$AvailabilitySetName
+		[string]$AvailabilitySetName,
+
+		[Parameter(ValueFromPipelineByPropertyName=$true)]
+		[string]$Logfile
 	)
 
 	################################ MAIN #################################################################
@@ -39,7 +42,9 @@ function Convert-AvSetUnmanagedToManaged {
 	#variable intializations
 	$subscription = $null
 	$avsObject = $null
-	$logf = $PWD.Path + "\$($AvailabilitySetName)-UnmanagedToManaged-" + $(Get-Date -uFormat %m%d%Y-%H%M%S) + ".TXT"
+	if (-not $logfile) {
+		$logf = $PWD.Path + "\$($AvailabilitySetName)-UnmanagedToManaged-" + $(Get-Date -uFormat %m%d%Y-%H%M%S) + ".TXT"
+	}
 
 	Write-Log "Parameters:" -Path $logf
 	Write-Log "ResourceGroupName: $RGName" -Path $logf
